@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Осколок рассвета — фан-игра</title>
+<style>
+*{box-sizing:border-box}
+body{
+  margin:0;min-height:100vh;background:#090913;color:#eee;
+  font-family:monospace;display:flex;align-items:center;
+  justify-content:center;padding:14px
+}
+main{width:min(900px,100%)}
+h1{font-size:24px;color:#cab5ff;margin:0 0 8px}
+.sub{color:#a5a2bb;font-size:12px;margin-bottom:14px}
+canvas{
+  display:block;width:100%;background:#101021;
+  border:2px solid #77718d;touch-action:none
+}
+#text{
+  min-height:85px;border:2px solid #77718d;
+  padding:14px;margin-top:10px;font-size:16px;line-height:1.5;
+  white-space:pre-line
+}
+#buttons{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:10px}
+button{
+  background:#171526;border:2px solid #f5a85a;color:#ffd18b;
+  padding:13px 4px;font:bold 15px monospace;cursor:pointer
+}
+button:hover:not(:disabled){background:#38234a;color:white}
+button:disabled{opacity:.3;cursor:default}
+.help{color:#9994af;font-size:12px;line-height:1.5;margin-top:10px}
+</style>
+</head>
+<body>
+<main>
+<h1>ОСКОЛОК РАССВЕТА</h1>
+<div class="sub">Неофициальная браузерная фан-игра по мотивам Deltarune</div>
+<canvas id="game" width="900" height="520"></canvas>
+<div id="text"></div>
+<div id="buttons">
+<button id="fight">АТАКА</button>
+<button id="act">ДЕЙСТВИЕ</button>
+<button id="heal">ЧАЙ × 3</button>
+<button id="spare">ПОЩАДА</button>
+</div>
+<div class="help">
+Движение: WASD / стрелки. На телефоне: веди пальцем по полю.
+Во время защиты приближайся к снарядам, не касаясь их: это восстанавливает здоровье.
+Пощада доступна при 100% доверия.
+</div>
+</main>
+
+<script>
+"use strict";
+const canvas=document.querySelector("#game");
+const ctx=canvas.getContext("2d");
+const text=document.querySelector("#text");
+const buttons=[...document.querySelectorAll("button")];
+const [fightBtn,actBtn,healBtn,spareBtn]=buttons;
+const W=900,H=520;
+const box={x:245,y:255,w:410,h:210};
+const keys=new Set();
+const enemies=[
+  {name:"ШЁПОТ",max:80,color:"#ad8cff",pattern:0,
+   intro:"В заброшенной библиотеке тебя встречает Шёпот.\n«Не переворачивай страницу. Там может быть конец».",
+   acts:["Ты слушаешь тишину между словами. Шёпот становится громче.",
+         "Ты обещаешь не закрывать книгу. Чернила перестают дрожать.",
+         "Ты читаешь вслух его имя. Теперь он помнит себя."]},
+  {name:"ЧАСОВЩИК",max:110,color:"#ffd073",pattern:1,
+   intro:"На мосту без берега стоит Часовщик.\n«Если время остановится, никто больше не уйдёт».",
+   acts:["Ты вспоминаешь хороший день. Стрелки слегка сдвигаются.",
+         "Ты объясняешь: ждать — не значит жить.",
+         "Ты предлагаешь идти вместе. Часовщик отпускает маятник."]},
+  {name:"СТРАЖ РАССВЕТА",max:145,color:"#77dfed",pattern:2,
+   intro:"Последняя дверь охраняется твоей собственной тенью.\n«Свет уничтожит наш мир. Докажи, что ошибаюсь».",
+   acts:["Ты показываешь истории тех, кого встретил.",
+         "Ты говоришь: рассвет не стирает ночь. Он продолжает её.",
+         "Ты протягиваешь руку. Страж впервые смотрит на небо."]}
+];
+
+let state,stage,hp,teas,mercy,enemyHP,actCount,kills;
+let bullets,player,clock,spawnClock,turn,invuln,sparks;
+let last=performance.now(),pointer=null,endTitle="",endBody="";
+let flash=0,grazeCount=0;
+const rand=(a,b)=>a+Math.random()*(b-a);
+const clamp=(n,a,b)=>Math.max(a,Math.min(b,n));
+const enemy=()=>enemies[stage];
+
+function say(s){text.textContent=s}
+function controls(){
+  const menu=state==="menu";
+  fightBtn.textContent=state==="title"?"НАЧАТЬ":
+    (state==="over"||state==="ending")?"ЗАНОВО":"АТАКА";
+  fightBtn.disabled=!(menu||["title","over","ending"].includes(state));
+  actBtn.disabled=!menu;
+  healBtn.disabled=!menu||teas<=0;
+  spareBtn.disabled=!menu||mercy<100;
+  healBtn.textContent="ЧАЙ × "+teas;
+}
+function reset(){
+  stage=0;hp=100;teas=3;kills=0;
+  bullets=[];sparks=[];player={x:450,y:370};
+  startStage();
+}
+function startStage(){
+  enemyHP=enemy().max;mercy=0;actCount=0;turn=0;
+  bullets=[];sparks=[];state="menu";pointer=null;
+  say(enemy().intro);controls();
+}
+function win(violent){
+  if(violent)kills++;
+  stage++;
+  if(stage<enemies.length){startStage();return}
+  state="ending";
+  endTitle=kills===0?"РАССВЕТ ДЛЯ ВСЕХ":"ДВЕРЬ ОТКРЫТА";
+  endBody=kills===0
+    ?"Вы выходите к свету вместе.\nНочь не исчезла — у неё появилось завтра."
+    :"Ты добираешься до рассвета.\nЗа спиной остаются истории, которых ты не услышал.";
+  say(endBody+"\nПобеждено силой: "+kills+" из 3.");
+  controls();
+}
+function defend(message){
+  state="defend";clock=0;spawnClock=.25;invuln=.4;
+  bullets=[];player={x:450,y:370};pointer=null;turn++;
+  say(message+"\nУклоняйся. Продержись 8 секунд.");controls();
+}
+fightBtn.onclick=()=>{
+  if(state!=="menu"){reset();return}
+  const damage=24+Math.floor(Math.random()*10);
+  enemyHP=Math.max(0,enemyHP-damage);
+  mercy=Math.max(0,mercy-10);
+  if(enemyHP===0){win(true);return}
+  defend("Ты наносишь "+damage+" урона. Противник отступает.");
+};
+actBtn.onclick=()=>{
+  if(state!=="menu")return;
+  const line=enemy().acts[Math.min(actCount,2)];
+  actCount++;mercy=Math.min(100,mercy+34);
+  defend(line);
+};
+healBtn.onclick=()=>{
+  if(state!=="menu"||teas<=0)return;
+  teas--;hp=Math.min(100,hp+38);
+  defend("Тёплый чай восстанавливает 38 здоровья.");
+};
+spareBtn.onclick=()=>{
+  if(state==="menu"&&mercy>=100)win(false);
+};
+function add(x,y,vx,vy,r=7){
+  bullets.push({x,y,vx,vy,r,grazed:false});
+}
+function wave(){
+  const p=enemy().pattern;
+  if(p===0){
+    const gap=rand(box.x+45,box.x+box.w-45);
+    for(let x=box.x+12;x<box.x+box.w;x+=31){
+      if(Math.abs(x-gap)>43)add(x,box.y-12,0,135+turn*4,7);
+    }
+  }else if(p===1){
+    const left=Math.random()<.5;
+    const x=left?box.x-15:box.x+box.w+15;
+    const y=rand(box.y+15,box.y+box.h-15);
+    const a=Math.atan2(player.y-y,player.x-x);
+    for(let k=-1;k<=1;k++){
+      add(x,y,Math.cos(a+k*.23)*165,Math.sin(a+k*.23)*165,8);
+    }
+  }else{
+    const gap=box.x+box.w/2+Math.sin(clock*1.5)*125;
+    for(let x=box.x+10;x<box.x+box.w;x+=29){
+      if(Math.abs(x-gap)>52)add(x,box.y-12,0,155,6);
+    }
+    if(Math.random()<.45){
+      const y=rand(box.y+20,box.y+box.h-20);
+      add(box.x-12,y,155,0,6);
+    }
+  }
+}
+function update(dt){
+  flash=Math.m
